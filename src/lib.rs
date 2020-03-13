@@ -1,10 +1,10 @@
 mod utils;
 mod tessellate;
+mod texture;
+mod pcx;
 
 use wasm_bindgen::prelude::*;
 
-// When the `wee_alloc` feature is enabled, use `wee_alloc` as the global
-// allocator.
 #[cfg(feature = "wee_alloc")]
 #[global_allocator]
 static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
@@ -16,3 +16,8 @@ pub fn triangulate(w: usize, h: usize, elevation: &[u8]) -> Box<[f32]> {
 
   return tris.into_boxed_slice();
 }
+
+// #[wasm_bindgen]
+// pub fn create_2d_texture(w: usize, h: usize, count: usize, index: &[usize], buf: &[u8], mask_index: Option<Box<[usize]>>, mask_buf: Option<Box<[u8]>>) {
+  
+// }
