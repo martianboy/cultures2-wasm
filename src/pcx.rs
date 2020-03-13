@@ -78,10 +78,10 @@ fn pcx_palette(buf: &[u8], palette: &mut [RGBColor; 256]) -> Result<(), &'static
     return Err("PCX extended palette marker 0x0C not found.");
   }
 
-  for i in 1..256 {
-    palette[i - 1].red = buf[1 + 3 * i];
-    palette[i - 1].green = buf[2 + 3 * i];
-    palette[i - 1].blue = buf[3 + 3 * i];
+  for i in 0..256 {
+    palette[i].red = buf[1 + 3 * i];
+    palette[i].green = buf[2 + 3 * i];
+    palette[i].blue = buf[3 + 3 * i];
   }
 
   Ok(())
