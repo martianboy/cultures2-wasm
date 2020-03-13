@@ -1,26 +1,3 @@
-use nom::IResult;
-use nom::{do_parse, named, take, tag, many1};
-use nom::number::complete::{le_u8, le_u16};
-
-pub struct PcxHeader<'a> {
-  pub magic: u8,
-  pub version: u8,
-  pub encoding_method: u8,
-  pub bits_per_pixel: u8,
-  pub width: usize,
-  pub height: usize,
-  pub h_dpi: u16,
-  pub v_dpi: u16,
-  pub palette: &'a[u8],
-  pub reserved: u8,
-  pub color_planes: u8,
-  pub bytes_per_color_plane: u16,
-  pub palette_type: u16,
-  pub h_res: u16,
-  pub v_res: u16,
-  // reserved_block: [u8; 54],
-}
-
 // pub fn run_length<'a, E: ParseError<&'a [u8]>>(buf: &'a[u8]) -> IResult<&'a[u8], &'a[u8], E> {
 //   if buf.len() < 1 {
 //     Err(Err::Error(make_error(buf, ErrorKind::Eof)))
@@ -38,7 +15,7 @@ pub struct PcxHeader<'a> {
 //   })
 // }
 
-fn read_pixels<'a, 'b>(buf: &'a [u8], pixels: &'b mut Vec<u8>) -> IResult<&'a[u8], &'b[u8], ()> {
+fn read_pixels<'a, 'b>(buf: &'a [u8], pixels: &'b mut Vec<u8>) -> (&'a[u8], &'b[u8]) {
   let mut i = 0;
   let mut pos = 0;
 
@@ -58,69 +35,57 @@ fn read_pixels<'a, 'b>(buf: &'a [u8], pixels: &'b mut Vec<u8>) -> IResult<&'a[u8
     }
   }
 
-  Ok((&buf[pos..], &pixels[..]))
+  (&buf[pos..], &pixels[..])
 }
 
+#[derive(Copy, Clone, Debug)]
 pub struct RGBColor {
   pub red: u8,
   pub green: u8,
   pub blue: u8,
 }
 
-named!(pcx_palette_rgba<RGBColor>, do_parse!(
-  red: le_u8 >>
-  green: le_u8 >>
-  blue: le_u8 >>
-  (RGBColor {
-    red,
-    green,
-    blue,
-  })
-));
+impl Default for RGBColor {
+  #[inline]
+  fn default() -> RGBColor {
+    RGBColor {
+      red: 0,
+      green: 0,
+      blue: 0
+    }
+  }
+}
 
-named!(pcx_palette<Vec<RGBColor>>, do_parse!(
-  tag!([0x0C]) >>
-  colors: many1!(pcx_palette_rgba) >>
-  (colors)
-));
+// named!(pcx_palette_rgba<RGBColor>, do_parse!(
+//   red: le_u8 >>
+//   green: le_u8 >>
+//   blue: le_u8 >>
+//   (RGBColor {
+//     red,
+//     green,
+//     blue,
+//   })
+// ));
 
-named!(pcx_header<PcxHeader>, do_parse!(
-  magic: le_u8 >>
-  version: le_u8 >>
-  encoding_method: le_u8 >>
-  bits_per_pixel: le_u8 >>
-  x0: le_u16 >>
-  y0: le_u16 >>
-  x1: le_u16 >>
-  y1: le_u16 >>
-  h_dpi: le_u16 >>
-  v_dpi: le_u16 >>
-  palette: take!(48) >>
-  reserved: le_u8 >>
-  color_planes: le_u8 >>
-  bytes_per_color_plane: le_u16 >>
-  palette_type: le_u16 >>
-  h_res: le_u16 >>
-  v_res: le_u16 >>
-  take!(54) >>
-  (PcxHeader {
-    magic,
-    version,
-    encoding_method,
-    bits_per_pixel,
-    width: (x1 - x0 + 1) as usize,
-    height: (y1 - y0 + 1) as usize,
-    h_dpi,
-    v_dpi,
-    palette,
-    reserved,
-    color_planes,
-    bytes_per_color_plane,
-    palette_type,
-    h_res,
-    v_res,
-  })
-));
+// named!(pcx_palette<Vec<RGBColor>>, do_parse!(
+//   tag!([0x0C]) >>
+//   colors: many1!(pcx_palette_rgba) >>
+//   (colors)
+// ));
+
+fn pcx_palette(buf: &[u8], palette: &mut [RGBColor; 256]) -> Result<(), &'static str> {
+  if buf[0] != 0x0C {
+    return Err("PCX extended palette marker 0x0C not found.");
+  }
+
+  for i in 1..256 {
+    palette[i - 1].red = buf[1 + 3 * i];
+    palette[i - 1].green = buf[2 + 3 * i];
+    palette[i - 1].blue = buf[3 + 3 * i];
+  }
+
+  Ok(())
+}
 
 fn read_uint16_le(buf: &[u8]) -> u16 {
   ((buf[1] as u16) << 8) + buf[0] as u16
@@ -136,22 +101,23 @@ fn pcx_read_dims(buf: &[u8]) -> (usize, usize) {
 }
 
 pub fn pcx_read<'a>(buf: &'a[u8], out: &mut [u8], mask: Option<&[u8]>) -> &'a[u8] {
-  let (rest, header) = pcx_header(buf).expect("pcx_header failed");
-  let buf_length = header.width * header.height;
+  let (width, height) = pcx_read_dims(&buf);
+  let buf_length = width * height;
 
   let alpha = match mask {
     None => vec![0xFFu8; buf_length],
     Some(mask_buf) => {
       let mut mask_out_buf = vec![0xFFu8; buf_length];
-      read_pixels(&mask_buf[0x80..], &mut mask_out_buf).expect("read_pixels failed for mask buffer.");
+      read_pixels(&mask_buf[0x80..], &mut mask_out_buf);
 
       mask_out_buf
     }
   };
 
   let mut pixels = vec![0; buf_length];
-  let (rest, _) = read_pixels(&rest, &mut pixels).expect("read_pixels failed.");
-  let (rest, palette) = pcx_palette(rest).expect("pcx_palette failed.");
+  let (rest, _) = read_pixels(&buf[0x80..], &mut pixels);
+  let mut palette: [RGBColor; 256] = [RGBColor::default(); 256];
+  pcx_palette(rest, &mut palette).expect("pcx_palette failed.");
 
   for i in 0..pixels.len() {
     out[4 * i + 0] = palette[pixels[i] as usize].red;
@@ -164,8 +130,8 @@ pub fn pcx_read<'a>(buf: &'a[u8], out: &mut [u8], mask: Option<&[u8]>) -> &'a[u8
 }
 
 pub fn pcx_texture_array(buf: &[u8], out: &mut [u8], index_table: &[usize], mask_index_table: Option<&[usize]>) {
-  let (_, header) = pcx_header(buf).expect("pcx_header failed");
-  let len = header.width * header.height * 4;
+  let (width, height) = pcx_read_dims(&buf);
+  let len = width * height * 4;
   for (i, idx) in index_table.iter().enumerate() {
     pcx_read(&buf[*idx..], &mut out[(i * len)..], mask_index_table.and_then(|mit| Some(&buf[mit[i]..])));
   }
@@ -188,14 +154,10 @@ mod tests {
     let mut buffer = Vec::new();
 
     buf_reader.read_to_end(&mut buffer).expect("read_to_end failed.");
-    let (_, header) = pcx_header(&buffer[..]).expect("pcx_header failed");
+    let (width, height) = pcx_read_dims(&buffer);
 
-    assert_eq!(header.magic, 0x0A);
-    assert_eq!(header.version, 0x05);
-    assert_eq!(header.encoding_method, 0x01);
-    assert_eq!(header.bits_per_pixel, 0x08);
-    assert_eq!(header.width, 256);
-    assert_eq!(header.height, 256);
+    assert_eq!(width, 256);
+    assert_eq!(height, 256);
   }
 
   #[test]
