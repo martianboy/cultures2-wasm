@@ -1,18 +1,14 @@
 use nom::IResult;
-use nom::error::{ParseError, ErrorKind, make_error};
 use nom::{do_parse, named, take, tag, many1};
-use nom::number::complete::{le_u8, le_u16, le_u32};
-use nom::Err;
+use nom::number::complete::{le_u8, le_u16};
 
 pub struct PcxHeader<'a> {
   pub magic: u8,
   pub version: u8,
   pub encoding_method: u8,
   pub bits_per_pixel: u8,
-  pub x0: usize,
-  pub y0: usize,
-  pub x1: usize,
-  pub y1: usize,
+  pub width: usize,
+  pub height: usize,
   pub h_dpi: u16,
   pub v_dpi: u16,
   pub palette: &'a[u8],
@@ -65,26 +61,24 @@ fn read_pixels<'a, 'b>(buf: &'a [u8], pixels: &'b mut Vec<u8>) -> IResult<&'a[u8
   Ok((&buf[pos..], &pixels[..]))
 }
 
-pub struct RGBAColor {
+pub struct RGBColor {
   pub red: u8,
   pub green: u8,
   pub blue: u8,
-  pub alpha: u8,
 }
 
-named!(pcx_palette_rgba<RGBAColor>, do_parse!(
+named!(pcx_palette_rgba<RGBColor>, do_parse!(
   red: le_u8 >>
   green: le_u8 >>
   blue: le_u8 >>
-  (RGBAColor {
+  (RGBColor {
     red,
     green,
     blue,
-    alpha: 0xFF
   })
 ));
 
-named!(pcx_palette<Vec<RGBAColor>>, do_parse!(
+named!(pcx_palette<Vec<RGBColor>>, do_parse!(
   tag!([0x0C]) >>
   colors: many1!(pcx_palette_rgba) >>
   (colors)
@@ -114,10 +108,8 @@ named!(pcx_header<PcxHeader>, do_parse!(
     version,
     encoding_method,
     bits_per_pixel,
-    x0: x0 as usize,
-    y0: y0 as usize,
-    x1: x1 as usize,
-    y1: y1 as usize,
+    width: (x1 - x0 + 1) as usize,
+    height: (y1 - y0 + 1) as usize,
     h_dpi,
     v_dpi,
     palette,
@@ -130,25 +122,36 @@ named!(pcx_header<PcxHeader>, do_parse!(
   })
 ));
 
-pub fn pcx_read(buf: &[u8], out: &mut [u8]) {
-  if let Ok((rest, header)) = pcx_header(buf) {
-    let mut pixels = vec![0; (header.x1 - header.x0 + 1) * (header.y1 - header.y0 + 1)];
-    let (rest, _) = read_pixels(&rest, &mut pixels).expect("read_pixels failed.");
-    if let Ok((rest, palette)) = pcx_palette(rest) {
-      for i in 0..pixels.len() {
-        out[4 * i + 0] = palette[pixels[i] as usize].red;
-        out[4 * i + 1] = palette[pixels[i] as usize].green;
-        out[4 * i + 2] = palette[pixels[i] as usize].blue;
-        out[4 * i + 3] = palette[pixels[i] as usize].alpha;
-      }
+pub fn pcx_read(buf: &[u8], out: &mut [u8], mask: Option<&[u8]>) {
+  let (rest, header) = pcx_header(buf).expect("pcx_header failed");
+  let buf_length = header.width * header.height;
+
+  let alpha = match mask {
+    None => vec![0xFFu8; buf_length],
+    Some(mask_buf) => {
+      let mut mask_out_buf = vec![0xFFu8; buf_length];
+      read_pixels(&mask_buf[0x80..], &mut mask_out_buf).expect("read_pixels failed for mask buffer.");
+
+      mask_out_buf
     }
-  } else {
-    panic!("Oh!");
-    // Err(Err::Error(make_error(buf, ErrorKind::Eof)))
+  };
+
+  let mut pixels = vec![0; buf_length];
+  let (rest, _) = read_pixels(&rest, &mut pixels).expect("read_pixels failed.");
+  let (_, palette) = pcx_palette(rest).expect("pcx_palette failed.");
+
+  for i in 0..pixels.len() {
+    out[4 * i + 0] = palette[pixels[i] as usize].red;
+    out[4 * i + 1] = palette[pixels[i] as usize].green;
+    out[4 * i + 2] = palette[pixels[i] as usize].blue;
+    out[4 * i + 3] = alpha[i];
   }
 }
 
-pub fn pcx_texture_array(buf: &[u8], out: &mut [u8]) {
+pub fn pcx_texture_array(buf: &[u8], out: &mut [u8], index_table: &[usize], mask_index_table: &[usize]) {
+  assert_eq!(index_table.len(), mask_index_table.len());
+
+  let (_, header) = pcx_header(buf).expect("pcx_header failed");
 
 }
 
@@ -163,46 +166,30 @@ mod tests {
 
   #[test]
   fn test_read_pcx_header() {
-    match File::open("/mnt/c/Users/Abbas/Projects/Personal/cultures2-wasm/tests/tran_desertbrown.pcx") {
-      Ok(file) => {
-        let mut buf_reader = BufReader::new(file);
-        let mut buffer = Vec::new();
+    let file = File::open("tests/tran_desertbrown.pcx").expect("File not found!");
 
-        buf_reader.read_to_end(&mut buffer);
-        let res = pcx_header(&buffer[..]);
-        if let Ok((_i, header)) = res {
-            assert_eq!(header.magic, 0x0A);
-            assert_eq!(header.version, 0x05);
-            assert_eq!(header.encoding_method, 0x01);
-            assert_eq!(header.bits_per_pixel, 0x08);
-            assert_eq!(header.x0, 0);
-            assert_eq!(header.y0, 0);
-            assert_eq!(header.x1, 255);
-            assert_eq!(header.y1, 255);
-        } else {
-            panic!("Hey!");
-        }
-      },
-      Err(e) => {
-        panic!("File not found!");
-      }
-    }
+    let mut buf_reader = BufReader::new(file);
+    let mut buffer = Vec::new();
+
+    buf_reader.read_to_end(&mut buffer).expect("read_to_end failed.");
+    let (_, header) = pcx_header(&buffer[..]).expect("pcx_header failed");
+
+    assert_eq!(header.magic, 0x0A);
+    assert_eq!(header.version, 0x05);
+    assert_eq!(header.encoding_method, 0x01);
+    assert_eq!(header.bits_per_pixel, 0x08);
+    assert_eq!(header.width, 256);
+    assert_eq!(header.height, 256);
   }
 
   #[test]
   fn test_pcx_read() {
-    match File::open("/mnt/c/Users/Abbas/Projects/Personal/cultures2-wasm/tests/tran_desertbrown.pcx") {
-      Ok(file) => {
-        let mut buf_reader = BufReader::new(file);
-        let mut buffer = Vec::new();
+    let file = File::open("tests/tran_desertbrown.pcx").expect("File not found!");
+    let mut buf_reader = BufReader::new(file);
+    let mut buffer = Vec::new();
 
-        buf_reader.read_to_end(&mut buffer);
-        let mut out = [0u8; 256 * 256 * 4];
-        pcx_read(&buffer, &mut out);
-      },
-      Err(e) => {
-        panic!("File not found!");
-      }
-    }
+    buf_reader.read_to_end(&mut buffer).expect("read_to_end failed.");
+    let mut out = [0u8; 256 * 256 * 4];
+    pcx_read(&buffer, &mut out, None);
   }
 }

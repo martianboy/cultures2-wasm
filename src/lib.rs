@@ -1,6 +1,5 @@
 mod utils;
 mod tessellate;
-mod texture;
 mod pcx;
 
 use wasm_bindgen::prelude::*;
