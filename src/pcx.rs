@@ -122,7 +122,20 @@ named!(pcx_header<PcxHeader>, do_parse!(
   })
 ));
 
-pub fn pcx_read(buf: &[u8], out: &mut [u8], mask: Option<&[u8]>) {
+fn read_uint16_le(buf: &[u8]) -> u16 {
+  ((buf[1] as u16) << 8) + buf[0] as u16
+}
+
+fn pcx_read_dims(buf: &[u8]) -> (usize, usize) {
+  let x0 = read_uint16_le(&buf[4..6]) as usize;
+  let y0 = read_uint16_le(&buf[6..8]) as usize;
+  let x1 = read_uint16_le(&buf[8..10]) as usize;
+  let y1 = read_uint16_le(&buf[10..12]) as usize;
+
+  return (x1 - x0 + 1, y1 - y0 + 1);
+}
+
+pub fn pcx_read<'a>(buf: &'a[u8], out: &mut [u8], mask: Option<&[u8]>) -> &'a[u8] {
   let (rest, header) = pcx_header(buf).expect("pcx_header failed");
   let buf_length = header.width * header.height;
 
@@ -138,7 +151,7 @@ pub fn pcx_read(buf: &[u8], out: &mut [u8], mask: Option<&[u8]>) {
 
   let mut pixels = vec![0; buf_length];
   let (rest, _) = read_pixels(&rest, &mut pixels).expect("read_pixels failed.");
-  let (_, palette) = pcx_palette(rest).expect("pcx_palette failed.");
+  let (rest, palette) = pcx_palette(rest).expect("pcx_palette failed.");
 
   for i in 0..pixels.len() {
     out[4 * i + 0] = palette[pixels[i] as usize].red;
@@ -146,13 +159,16 @@ pub fn pcx_read(buf: &[u8], out: &mut [u8], mask: Option<&[u8]>) {
     out[4 * i + 2] = palette[pixels[i] as usize].blue;
     out[4 * i + 3] = alpha[i];
   }
+
+  return rest;
 }
 
-pub fn pcx_texture_array(buf: &[u8], out: &mut [u8], index_table: &[usize], mask_index_table: &[usize]) {
-  assert_eq!(index_table.len(), mask_index_table.len());
-
+pub fn pcx_texture_array(buf: &[u8], out: &mut [u8], index_table: &[usize], mask_index_table: Option<&[usize]>) {
   let (_, header) = pcx_header(buf).expect("pcx_header failed");
-
+  let len = header.width * header.height * 4;
+  for (i, idx) in index_table.iter().enumerate() {
+    pcx_read(&buf[*idx..], &mut out[(i * len)..], mask_index_table.and_then(|mit| Some(&buf[mit[i]..])));
+  }
 }
 
 #[cfg(test)]

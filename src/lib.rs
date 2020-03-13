@@ -16,7 +16,18 @@ pub fn triangulate(w: usize, h: usize, elevation: &[u8]) -> Box<[f32]> {
   return tris.into_boxed_slice();
 }
 
-// #[wasm_bindgen]
-// pub fn create_2d_texture(w: usize, h: usize, count: usize, index: &[usize], buf: &[u8], mask_index: Option<Box<[usize]>>, mask_buf: Option<Box<[u8]>>) {
-  
-// }
+#[wasm_bindgen]
+pub fn create_2d_texture_masked(w: usize, h: usize, buf: &[u8], index: &[usize], mask_index: &[usize]) -> Box<[u8]> {
+  let mut out = vec![0u8; w * h * index.len() * 4];
+  pcx::pcx_texture_array(&buf, &mut out[..], &index, Some(&mask_index));
+
+  return out.into_boxed_slice();
+}
+
+#[wasm_bindgen]
+pub fn create_2d_texture(w: usize, h: usize, buf: &[u8], index: &[usize]) -> Box<[u8]> {
+  let mut out = vec![0u8; w * h * index.len() * 4];
+  pcx::pcx_texture_array(&buf, &mut out[..], &index, None);
+
+  return out.into_boxed_slice();
+}
