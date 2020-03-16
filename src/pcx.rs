@@ -79,6 +79,22 @@ pub fn pcx_texture_array(buf: &[u8], out: &mut [u8], index_table: &[usize], mask
   }
 }
 
+pub fn pcx_read_palette_array<'a>(buf: &'a[u8], index: &[usize]) -> Vec<&'a[u8]> {
+  let mut out: Vec<&'a[u8]> = vec![buf; index.len()];
+
+  for (i, pos) in index.iter().enumerate() {
+    let length = if i < index.len() - 1 {
+      index[i + 1] - index[i]
+    } else {
+      buf.len() - index[i]
+    };
+
+    out[i] = read_palette(&buf[*pos + length - 769..]).expect("read_palette failed");
+  }
+
+  return out;
+}
+
 // pub fn pcx_read_palette(buf: &[u8], ) {
 //   let mut palette: [RGBColor; 256] = [RGBColor::default(); 256];
 //   read_palette(rest, &mut palette).expect("read_palette failed.");
@@ -110,12 +126,24 @@ mod tests {
 
   #[test]
   fn test_pcx_read() {
-    let file = File::open("tests/tran_desertbrown.pcx").expect("File not found!");
+    let file = File::open("tests/fire.pcx").expect("File not found!");
     let mut buf_reader = BufReader::new(file);
     let mut buffer = Vec::new();
 
     buf_reader.read_to_end(&mut buffer).expect("read_to_end failed.");
+
     let mut out = [0u8; 256 * 256 * 4];
     pcx_read(&buffer, &mut out, None);
+  }
+
+  #[test]
+  fn test_pcx_read_palette_array() {
+    let file = File::open("tests/fire.pcx").expect("File not found!");
+    let mut buf_reader = BufReader::new(file);
+    let mut buffer = Vec::new();
+
+    buf_reader.read_to_end(&mut buffer).expect("read_to_end failed.");
+
+    pcx_read_palette_array(&buffer[..], &[0usize; 1]);
   }
 }
