@@ -1,8 +1,10 @@
 use web_sys::console;
 use wasm_bindgen::JsValue;
+use image::dxt::{DXTEncoder, DXTVariant};
 
 use std::cmp;
 use std::fmt;
+use std::io::{BufWriter, Write};
 
 struct BmdHeader {
   num_frames: usize,
@@ -29,6 +31,7 @@ pub struct BmdStats {
   pub width: usize,
   pub height: usize,
   pub frames: usize,
+  pub encoded_length: usize,
 }
 
 
@@ -102,7 +105,7 @@ fn read_pixels<'a>(buf: &'a[u8]) -> Result<(&'a[u8], &'a[u8]), &'static str> {
 
 pub fn bmd_stats(buf: &[u8], has_shadow: &[u8], count: usize) -> Vec<BmdStats> {
   let mut remaining_slice = buf;
-  let mut bmd_stats_vec = vec![BmdStats { frames: 0, width: 0, height: 0 }; count];
+  let mut bmd_stats_vec = vec![BmdStats { frames: 0, width: 0, height: 0, encoded_length: 0 }; count];
 
   for i in 0..count {
     let (rest, header) = read_bmd_header(remaining_slice);
@@ -146,12 +149,30 @@ pub fn bmd_stats(buf: &[u8], has_shadow: &[u8], count: usize) -> Vec<BmdStats> {
         }
       }
     }
+
+    // stat.width += stat.width % 4;
+    // stat.height += stat.height % 4;
+
+    stat.encoded_length = 4 * header.num_frames * stat.width * stat.height; // calc_output_size(stat.width as u32, stat.height as u32);
   }
 
   return bmd_stats_vec;
 }
 
-pub fn read_bmd(w: usize, h: usize, has_shadow: bool, buf: &[u8], out: &mut [u8], frame_palette_index: &[usize], palettes: &Vec<&[u8]>, _debug: bool) {
+#[inline]
+fn divide_up_by_multiple(val: u32, align: u32) -> u32 {
+  let mask: u32 = align - 1;
+  (val + mask) / align
+}
+
+#[inline]
+fn calc_output_size(width: u32, height: u32) -> usize {
+  // BC1 uses 8 bytes to store each 4×4 block, giving it an average data rate of 0.5 bytes per pixel.
+  let block_count = divide_up_by_multiple(width * height, 16) as usize;
+  block_count * 8
+}
+
+pub fn read_bmd(w: usize, h: usize, has_shadow: bool, buf: &[u8], out: &mut [u8], frame_palette_index: &[usize], palettes: &Vec<&[u8]>, _debug: bool) -> usize {
   // if _debug { console::log_2(&"read_bmd: 1".into(), &JsValue::from(has_shadow)); }
 
   let (rest, header) = read_bmd_header(buf);
@@ -161,7 +182,8 @@ pub fn read_bmd(w: usize, h: usize, has_shadow: bool, buf: &[u8], out: &mut [u8]
   let mut rows = vec![BmdRowInfo { indent: 0, offset: 0 }; header.num_rows];
   let rest = read_rows(rest, &mut rows[..]).expect("read_rows failed.");
 
-  let mut row_pointer: usize = 0;
+  let mut out_pointer: usize = 0;
+  // let mut writer = BufWriter::new(out);
 
   if has_shadow {
     let (rest, s_header) = read_bmd_header(rest);
@@ -171,38 +193,42 @@ pub fn read_bmd(w: usize, h: usize, has_shadow: bool, buf: &[u8], out: &mut [u8]
     let mut s_rows = vec![BmdRowInfo { indent: 0, offset: 0 }; s_header.num_rows];
     read_rows(rest, &mut s_rows[..]).expect("read_rows failed.");
 
-    // if _debug { console::log_1(&"read_bmd: 3".into()); }
+    let encoded_frame_length = w * h * 4; //calc_output_size(w as u32, h as u32);
 
     for (i, f) in s_frames.iter().enumerate() {
-      // if _debug { console::log_1(&format!("f.width = {}, f.len = {}", frames[i].width, frames[i].len).into()); }
-      // if _debug { console::log_1(&format!("frames[{}].width = {}, frames[{}].len = {}", i, f.width, i, f.len).into()); }
-      // if _debug { console::log_1(&format!("{} - {} = {}", frames[i].width, f.width, frames[i].width - f.width).into()); }
+      // let encoder = DXTEncoder::new(&mut writer);
+      // let mut img = vec![0u8; w * h * 4];
 
       let dw = frames[i].width - cmp::min(frames[i].width, f.width);
       let dh = frames[i].len - cmp::min(frames[i].len, f.len);
 
-      // if _debug { console::log_1(&format!("dw = {}, dh = {}", dw, dh).into()); }
+      let padding_w = (w - frames[i].width) / 2;
+      let padding_h = h - frames[i].len;
 
-      let padding_w = dw + (w - frames[i].width) / 2;
-      let padding_h = dh + h - frames[i].len;
+      read_bmd_frame(w, dw + padding_w, dh + padding_h, f, &s_rows[f.off..f.off + f.len], &s_pixels[s_rows[f.off].offset..], &mut out[out_pointer..], palettes[frame_palette_index[i]], _debug);
 
-      // if _debug { console::log_3(&"read_bmd: frame:".into(), &JsValue::from(i as u32), &JsValue::from(f.len as u32)); }
-      read_bmd_frame(w, padding_w, padding_h, f, &s_rows[row_pointer..row_pointer + f.len], &s_pixels[s_rows[f.off].offset..], &mut out[i * w * h * 4..], palettes[frame_palette_index[i]], _debug);
-      
-      row_pointer += f.len;
+      let fb = &frames[i];
+      read_bmd_frame(w, padding_w, padding_h, fb, &rows[fb.off..fb.off + fb.len], &pixels[rows[fb.off].offset..], &mut out[out_pointer..], palettes[frame_palette_index[i]], _debug);
+
+      console::log_1(&format!("Hey there!").into());
+      // encoder.encode(&img[..], w as u32, h as u32, DXTVariant::DXT1).expect("DXT1 encoder failed");
+      out_pointer += encoded_frame_length;
     }
+  } else {
+    for (i, f) in frames.iter().enumerate() {
+      let mut img = vec![0u8; w * h * 4];
+
+      let padding_w = (w - frames[i].width) / 2;
+      let padding_h = h - frames[i].len;
+
+      read_bmd_frame(w, padding_w, padding_h, f, &rows[f.off..f.off + f.len], &pixels[rows[f.off].offset..], &mut img[..], palettes[frame_palette_index[i]], _debug);
+    }
+  }
 
     // if _debug { console::log_1(&"read_bmd: 4".into()); }
-  }
 
-  row_pointer = 0;
-  for (i, f) in frames.iter().enumerate() {
-    let padding_w = (w - f.width) / 2;
-    let padding_h = h - f.len;
-
-    read_bmd_frame(w, padding_w, padding_h, f, &rows[f.off..f.off + f.len], &pixels[rows[f.off].offset..], &mut out[i * w * h * 4..], palettes[frame_palette_index[i]], _debug);
-    row_pointer += f.len;
-  }
+  // out_pointer += calc_output_size(w, f.)
+  return out_pointer;
 }
 
 fn read_bmd_frame(w: usize, p_w: usize, p_h: usize, fi: &BmdFrameInfo, rows: &[BmdRowInfo], pixels: &[u8], out: &mut [u8], palette: &[u8], _debug: bool) {
@@ -217,7 +243,7 @@ fn read_bmd_frame(w: usize, p_w: usize, p_h: usize, fi: &BmdFrameInfo, rows: &[B
 
     if pixels_ptr >= pixels.len() { return };
 
-    out_pos = 4 * ((i + p_h) * w + r.indent + p_w);
+    out_pos = 3 * ((i + p_h) * w + r.indent + p_w);
     // if _debug { console::log_1(&format!("{} = 4 * (({} + {}) * {} + {} + {})", out_pos, i, p_h, w, r.indent, p_w).into()); }
 
     let mut pixel_block_length: usize = pixels[pixels_ptr] as usize; pixels_ptr += 1;
@@ -234,20 +260,20 @@ fn read_bmd_frame(w: usize, p_w: usize, p_h: usize, fi: &BmdFrameInfo, rows: &[B
             out[out_pos + 0] = 0;
             out[out_pos + 1] = 0;
             out[out_pos + 2] = 0;
-            out[out_pos + 3] = 0x80;
+            // out[out_pos + 3] = 0x80;
           } else if fi.frame_type == 1 {    // Normal frame
             let color_index = pixels[pixels_ptr] as usize; pixels_ptr += 1;
             out[out_pos + 0] = palette[3 * color_index + 0];
             out[out_pos + 1] = palette[3 * color_index + 1];
             out[out_pos + 2] = palette[3 * color_index + 2];
-            out[out_pos + 3] = 0xFF;
+            // out[out_pos + 3] = 0xFF;
           } else {
             // console::log_2(&"read_bmd: frame type unknown:".into(), &JsValue::from(fi.frame_type as u32));
           }
-          out_pos += 4;
+          out_pos += 3;
         }
       } else {
-        out_pos += 4 * (pixel_block_length - 0x80);
+        out_pos += 3 * (pixel_block_length - 0x80);
       }
 
       pixel_block_length = pixels[pixels_ptr] as usize; pixels_ptr += 1;
@@ -263,9 +289,30 @@ mod tests {
   use crate::pcx::pcx_read_palette_array;
 
   use image;
-  
+  use image::png::{PngDecoder, PNGReader};
+  use image::ImageDecoder;
+
   // Note this useful idiom: importing names from outer (for mod tests) scope.
   use super::*;
+
+  #[test]
+  fn test_dxt1() {
+    let file = File::open("tests/cat.png").expect("File not found!");
+    let mut buf_reader = BufReader::new(file);
+    let img = PngDecoder::new(&mut buf_reader).expect("PngDecoder failed!");
+    let (w, h) = (352, 352);
+
+    let mut buf = vec![0u8; 352 * 352 * 4];
+    img.read_image(&mut buf).expect("read_image failed.");
+    // buf_reader.read_to_end(&mut img).expect("read_to_end failed.");
+
+    println!("{}x{} -> {} bytes", w, h, calc_output_size(w, h));
+
+    let mut enc_buf = vec![0u8; calc_output_size(w, h)];
+    let mut writer = BufWriter::new(&mut enc_buf);
+    let encoder = DXTEncoder::new(&mut writer);
+    encoder.encode(&buf, 352, 352, DXTVariant::DXT1).expect("DXT1 encoder failed.");
+  }
 
   #[test]
   fn test_bmd_stats() {
@@ -305,10 +352,14 @@ mod tests {
 
     let palette_array = pcx_read_palette_array(&palette_buf, &[0usize]);
 
-    let mut img = vec![0u8; stats[0].width * stats[0].height * 4];
+    let mut img = vec![0u8; stats[0].width * stats[0].height * 3];
     let fi = &frames[0]; // frames.iter().find(|&x| x.width == stats[0].width).expect("Hey!");
     println!("### {}", pixels.len());
     read_bmd_frame(stats[0].width, (stats[0].width - fi.width) / 2, stats[0].height - fi.len, fi, &rows[fi.off..fi.off + fi.len], &pixels[rows[fi.off].offset..], &mut img[..], &palette_array[0], true);
+
+    let mut encoded_buf = vec![0u8; calc_output_size(stats[0].width as u32, stats[0].height as u32)];
+    let encoder = DXTEncoder::new(BufWriter::new(&mut encoded_buf));
+    encoder.encode(&img[..], stats[0].width as u32, stats[0].height as u32, DXTVariant::DXT1).expect("Hey!");
 
     image::save_buffer("tests/ls_trees.png", &img[..], stats[0].width as u32, stats[0].height as u32, image::ColorType::Rgba8).unwrap();
   }
