@@ -62,7 +62,7 @@ pub fn create_bmd_texture_array(bmd_buf: &[u8], palette_buf: &[u8], bmd_index: &
   let bmd_stats = bmd::bmd_stats(bmd_buf, has_shadow, bmd_index.len());
   // console::log_1(&"bmd_stats: done".into());
 
-  let total_buf_length = 4 * bmd_stats.iter().fold(0, |r, s| r + s.width * s.height * s.frames + 3);
+  let total_buf_length = 4 * 4 + bmd_stats.iter().fold(0, |r, s| r + s.encoded_length);
   let mut images = vec![0u8; total_buf_length];
 
   let mut out_ptr = 0usize;
@@ -75,13 +75,14 @@ pub fn create_bmd_texture_array(bmd_buf: &[u8], palette_buf: &[u8], bmd_index: &
     write_uint32_le(&mut images[out_ptr..], s.frames as u32); out_ptr += 4;
     write_uint32_le(&mut images[out_ptr..], s.width as u32); out_ptr += 4;
     write_uint32_le(&mut images[out_ptr..], s.height as u32); out_ptr += 4;
+    write_uint32_le(&mut images[out_ptr..], s.encoded_length as u32); out_ptr += 4;
 
     // let msg = format!("Bmd #{} - frames: {}, width: {}, height: {}", i, s.frames, s.width, s.height);
     // console::log_1(&msg.into());
 
     // Write texture 2d image
     bmd::read_bmd(s.width, s.height, has_shadow[i] > 0, &bmd_buf[bmd_index[i]..], &mut images[out_ptr..], &frame_palette_index[frame_ptr..], &palettes, false);
-    out_ptr += s.frames * s.width * s.height * 4;
+    out_ptr += s.encoded_length;
     frame_ptr += s.frames;
   }
 
