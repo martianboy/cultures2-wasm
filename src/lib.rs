@@ -52,7 +52,7 @@ fn write_uint32_le(buf: &mut [u8], val: u32) {
 }
 
 #[wasm_bindgen]
-pub fn create_bmd_texture_array(bmd_buf: &[u8], palette_buf: &[u8], bmd_index: &[usize], has_shadow: &[u8], palette_index: &[usize], frame_palette_index: &[usize]) -> Box<[u8]> {
+pub fn create_bmd_texture_array(bmd_buf: &[u8], palette_buf: &[u8], bmd_index: &[usize], bmd_frame_instance_count: &[usize], has_shadow: &[u8], palette_index: &[usize], frame_palette_index: &[usize]) -> Box<[u8]> {
   let _timer = timer::Timer::new("create_bmd_texture_array");
   // console::log_1(&"create_bmd_texture_array: begin".into());
 
@@ -62,29 +62,36 @@ pub fn create_bmd_texture_array(bmd_buf: &[u8], palette_buf: &[u8], bmd_index: &
   let bmd_stats = bmd::bmd_stats(bmd_buf, has_shadow, bmd_index.len());
   // console::log_1(&"bmd_stats: done".into());
 
-  let total_buf_length = 4 * 4 + bmd_stats.iter().fold(0, |r, s| r + s.encoded_length);
+  let total_buf_length = 4 * 4 + bmd_stats.iter().zip(bmd_frame_instance_count).fold(0, |r, (s, c)| r + c * s.encoded_length);
   let mut images = vec![0u8; total_buf_length];
 
   let mut out_ptr = 0usize;
-  let mut frame_ptr = 0usize;
+  // let mut frame_ptr = 0usize;
 
   for i in 0..bmd_index.len() {
     let s = &bmd_stats[i];
 
     // Write header
-    write_uint32_le(&mut images[out_ptr..], s.frames as u32); out_ptr += 4;
+    write_uint32_le(&mut images[out_ptr..], bmd_frame_instance_count[i] as u32); out_ptr += 4;
     write_uint32_le(&mut images[out_ptr..], s.width as u32); out_ptr += 4;
     write_uint32_le(&mut images[out_ptr..], s.height as u32); out_ptr += 4;
-    write_uint32_le(&mut images[out_ptr..], s.encoded_length as u32); out_ptr += 4;
+    write_uint32_le(&mut images[out_ptr..], (bmd_frame_instance_count[i] * s.encoded_length) as u32); out_ptr += 4;
 
     // let msg = format!("Bmd #{} - frames: {}, width: {}, height: {}", i, s.frames, s.width, s.height);
     // console::log_1(&msg.into());
 
     // Write texture 2d image
-    bmd::read_bmd(s.width, s.height, has_shadow[i] > 0, &bmd_buf[bmd_index[i]..], &mut images[out_ptr..], &frame_palette_index[frame_ptr..], &palettes, false);
-    out_ptr += s.encoded_length;
-    frame_ptr += s.frames;
+    let mut it = frame_palette_index.chunks(3).filter(|&c| c[0] == i).map(|c| (&c[1], &c[2]));
+
+    bmd::read_bmd(s.width, s.height, has_shadow[i] > 0, &bmd_buf[bmd_index[i]..], &mut images[out_ptr..], &mut it, &palettes, false);
+    out_ptr += bmd_frame_instance_count[i] * s.encoded_length;
+    // frame_ptr += s.frames;
   }
 
   return images.into_boxed_slice();
+}
+pub fn test_map(it: &mut impl std::iter::Iterator<Item = (usize, usize)>) {
+  for (a, b) in it {
+
+  }
 }
