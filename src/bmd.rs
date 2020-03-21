@@ -15,6 +15,8 @@ struct BmdHeader {
 #[derive(Copy, Clone)]
 struct BmdFrameInfo {
   frame_type: u32,
+  dx: i32,
+  dy: i32,
   width: usize,
   len: usize,
   off: usize,
@@ -56,18 +58,17 @@ fn read_frames<'a>(buf: &'a[u8], frames: &mut [BmdFrameInfo]) -> Result<&'a[u8],
   }
 
   let section_length = read_uint32_le(&buf[0x08..]) as usize;
-  let mut rest: &[u8] = &buf[12..];
 
-  for i in 0..section_length / 24 {
-    frames[i].frame_type = read_uint32_le(&rest);
-    frames[i].width = read_uint32_le(&rest[12..]) as usize;
-    frames[i].len = read_uint32_le(&rest[16..]) as usize;
-    frames[i].off = read_uint32_le(&rest[20..]) as usize;
-
-    rest = &rest[24..];
+  for (ch, f) in buf[12..section_length + 12].chunks(24).zip(frames.iter_mut()) {
+    f.frame_type = read_uint32_le(&ch);
+    f.dx = read_uint32_le(&ch[4..]) as i32;
+    f.dy = read_uint32_le(&ch[8..]) as i32;
+    f.width = read_uint32_le(&ch[12..]) as usize;
+    f.len = read_uint32_le(&ch[16..]) as usize;
+    f.off = read_uint32_le(&ch[20..]) as usize;
   }
 
-  Ok(&rest)
+  Ok(&buf[section_length + 12..])
 }
 
 fn skip_section(buf: &[u8]) -> &[u8] {
@@ -109,7 +110,7 @@ pub fn bmd_stats(buf: &[u8], has_shadow: &[u8], count: usize) -> Vec<BmdStats> {
 
   for i in 0..count {
     let (rest, header) = read_bmd_header(remaining_slice);
-    let mut frames = vec![BmdFrameInfo { frame_type: 0, width: 0, len: 0, off: 0 }; header.num_frames];
+    let mut frames = vec![BmdFrameInfo { frame_type: 0, dx: 0, dy: 0, width: 0, len: 0, off: 0 }; header.num_frames];
     let mut shadow_frames: Option<Vec<BmdFrameInfo>> = None;
     let rest = read_frames(rest, &mut frames[..]).expect("read_frames failed");
     let rest = skip_section(rest);
@@ -118,7 +119,7 @@ pub fn bmd_stats(buf: &[u8], has_shadow: &[u8], count: usize) -> Vec<BmdStats> {
 
     if has_shadow[i] > 0 {
       let (rest, header) = read_bmd_header(remaining_slice);
-      let mut fv = vec![BmdFrameInfo { frame_type: 0, width: 0, len: 0, off: 0 }; header.num_frames];
+      let mut fv = vec![BmdFrameInfo { frame_type: 0, dx: 0, dy: 0, width: 0, len: 0, off: 0 }; header.num_frames];
       let rest = read_frames(rest, &mut fv[..]).expect("read_frames failed");
       let rest = skip_section(rest);
       let rest = skip_section(rest);
@@ -130,17 +131,18 @@ pub fn bmd_stats(buf: &[u8], has_shadow: &[u8], count: usize) -> Vec<BmdStats> {
     let mut stat = &mut bmd_stats_vec[i];
     stat.frames += header.num_frames;
 
-    for f in frames {
-      if stat.width < f.width {
-        stat.width = f.width;
-      }
-      if stat.height < f.len {
-        stat.height = f.len;
-      }
-    }
-
     if let Some(s_frames) = shadow_frames {
-      for f in s_frames {
+      for (f, fs) in frames.iter().zip(s_frames.iter()) {
+        let x0 = cmp::min(f.dx, fs.dx);
+        let y0 = cmp::min(f.dy, fs.dy);
+        let x1 = cmp::max(f.width as i32 + f.dx, fs.width as i32 + fs.dx);
+        let y1 = cmp::max(f.width as i32 + f.dx, fs.width as i32 + fs.dx);
+
+        stat.width = cmp::max(stat.width, (x1 - x0) as usize);
+        stat.height = cmp::max(stat.height, (y1 - y0) as usize);
+      }
+    } else {
+      for f in frames {
         if stat.width < f.width {
           stat.width = f.width;
         }
@@ -172,57 +174,64 @@ pub fn bmd_stats(buf: &[u8], has_shadow: &[u8], count: usize) -> Vec<BmdStats> {
 //   block_count * 8
 // }
 
-pub fn read_bmd<'a>(w: usize, h: usize, has_shadow: bool, buf: &[u8], out: &mut [u8], frame_palette_index: &mut impl std::iter::Iterator<Item = (&'a usize, &'a usize)>, palettes: &Vec<&[u8]>, _debug: bool) -> usize {
+#[inline]
+fn write_uint32_le(buf: &mut [u8], val: u32) {
+  buf[0] = (val & 0xFF) as u8;
+  buf[1] = ((val & 0xFF00) >> 8) as u8;
+  buf[2] = ((val & 0xFF0000) >> 16) as u8;
+  buf[3] = ((val & 0xFF000000) >> 24) as u8;
+}
+
+pub fn read_bmd<'a>(w: usize, h: usize, instance_count: usize, has_shadow: bool, buf: &[u8], out: &mut [u8], frame_palette_index: &mut impl std::iter::Iterator<Item = (&'a usize, &'a usize)>, palettes: &Vec<&[u8]>, _debug: bool) -> usize {
   // if _debug { console::log_2(&"read_bmd: 1".into(), &JsValue::from(has_shadow)); }
 
   let (rest, header) = read_bmd_header(buf);
-  let mut frames = vec![BmdFrameInfo { frame_type: 0, width: 0, len: 0, off: 0 }; header.num_frames];
+  let mut frames = vec![BmdFrameInfo { frame_type: 0, dx: 0, dy: 0, width: 0, len: 0, off: 0 }; header.num_frames];
   let rest = read_frames(rest, &mut frames[..]).expect("read_frames failed");
   let (rest, pixels) = read_pixels(rest).expect("read_pixels failed.");
   let mut rows = vec![BmdRowInfo { indent: 0, offset: 0 }; header.num_rows];
   let rest = read_rows(rest, &mut rows[..]).expect("read_rows failed.");
 
-  let mut out_pointer: usize = 0;
+  let mut frame_offset_ptr = 0usize;
+  let mut out_pointer: usize = instance_count * 8;
   // let mut writer = BufWriter::new(out);
 
   let encoded_frame_length = w * h * 4; //calc_output_size(w as u32, h as u32);
 
   if has_shadow {
     let (rest, s_header) = read_bmd_header(rest);
-    let mut s_frames = vec![BmdFrameInfo { frame_type: 0, width: 0, len: 0, off: 0 }; s_header.num_frames];
+    let mut s_frames = vec![BmdFrameInfo { frame_type: 0, dx: 0, dy: 0, width: 0, len: 0, off: 0 }; s_header.num_frames];
     let rest = read_frames(rest, &mut s_frames[..]).expect("read_frames failed");
     let (rest, s_pixels) = read_pixels(rest).expect("read_pixels failed.");
     let mut s_rows = vec![BmdRowInfo { indent: 0, offset: 0 }; s_header.num_rows];
     read_rows(rest, &mut s_rows[..]).expect("read_rows failed.");
 
-    for ((f, fb), p) in frame_palette_index.map(|(&fi, &pi)| { (((&s_frames[fi], &frames[fi]), palettes[pi])) }) {
+    for ((fs, f), p) in frame_palette_index.map(|(&fi, &pi)| { (((&s_frames[fi], &frames[fi]), palettes[pi])) }) {
+      write_uint32_le(&mut out[frame_offset_ptr..], cmp::min(f.dx, fs.dx) as u32);
+      write_uint32_le(&mut out[frame_offset_ptr + 4..], cmp::min(f.dy, fs.dy) as u32);
+      frame_offset_ptr += 8;
+
       // let encoder = DXTEncoder::new(&mut writer);
       // let mut img = vec![0u8; w * h * 4];
 
-      let dw = fb.width - cmp::min(fb.width, f.width);
-      let dh = fb.len - cmp::min(fb.len, f.len);
-
-      let padding_w = (w - fb.width) / 2;
-      let padding_h = h - fb.len;
-
       read_bmd_frame(
         w,
-        dw + padding_w,
-        dh + padding_h,
-        f,
-        &s_rows[f.off..f.off + f.len],
-        &s_pixels[s_rows[f.off].offset..],
+        cmp::max(0, fs.dx - f.dx) as usize,
+        cmp::max(0, fs.dy - f.dy) as usize,
+        fs,
+        &s_rows[fs.off..fs.off + fs.len],
+        &s_pixels[s_rows[fs.off].offset..],
         &mut out[out_pointer..],
         p,
         _debug
       );
       read_bmd_frame(
         w,
-        padding_w,
-        padding_h,
-        fb,
-        &rows[fb.off..fb.off + fb.len],
-        &pixels[rows[fb.off].offset..],
+        cmp::max(0, f.dx - fs.dx) as usize,
+        cmp::max(0, f.dy - fs.dy) as usize,
+        f,
+        &rows[f.off..f.off + f.len],
+        &pixels[rows[f.off].offset..],
         &mut out[out_pointer..],
         p,
         _debug
@@ -234,13 +243,10 @@ pub fn read_bmd<'a>(w: usize, h: usize, has_shadow: bool, buf: &[u8], out: &mut 
     }
   } else {
     for (f, p) in frame_palette_index.map(|(&fi, &pi)| { ((&frames[fi], palettes[pi])) }) {
-      let padding_w = (w - f.width) / 2;
-      let padding_h = h - f.len;
-
       read_bmd_frame(
         w,
-        padding_w,
-        padding_h,
+        0,
+        0,
         f,
         &rows[f.off..f.off + f.len],
         &pixels[rows[f.off].offset..],
@@ -288,7 +294,7 @@ fn read_bmd_frame(w: usize, p_w: usize, p_h: usize, fi: &BmdFrameInfo, rows: &[B
             out[out_pos + 0] = 0;
             out[out_pos + 1] = 0;
             out[out_pos + 2] = 0;
-            out[out_pos + 3] = 0x60;
+            out[out_pos + 3] = 0x50;
           } else if fi.frame_type == 1 {    // Normal frame
             let color_index = pixels[pixels_ptr] as usize; pixels_ptr += 1;
             out[out_pos + 0] = palette[3 * color_index + 0];
@@ -353,6 +359,14 @@ mod tests {
     let stats = bmd_stats(&buffer[..], &[0u8; 1][..], 1);
 
     println!("{} : {} : {}", stats[0].frames, stats[0].width, stats[0].height);
+  }
+
+  #[test]
+  fn test_le_i32() {
+    let ba = [0xCC, 0xFF, 0xFF, 0xFF];
+    let u = read_uint32_le(&ba[..]);
+    println!("{}", u);
+    println!("{}", u as i32);
   }
 
   // #[test]

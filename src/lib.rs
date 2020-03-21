@@ -62,7 +62,7 @@ pub fn create_bmd_texture_array(bmd_buf: &[u8], palette_buf: &[u8], bmd_index: &
   let bmd_stats = bmd::bmd_stats(bmd_buf, has_shadow, bmd_index.len());
   // console::log_1(&"bmd_stats: done".into());
 
-  let total_buf_length = 4 * 4 + bmd_stats.iter().zip(bmd_frame_instance_count).fold(0, |r, (s, c)| r + c * s.encoded_length);
+  let total_buf_length = 4 * 4 + bmd_stats.iter().zip(bmd_frame_instance_count).fold(0, |r, (s, c)| r + c * (2 * 4 + s.encoded_length));
   let mut images = vec![0u8; total_buf_length];
 
   let mut out_ptr = 0usize;
@@ -83,15 +83,10 @@ pub fn create_bmd_texture_array(bmd_buf: &[u8], palette_buf: &[u8], bmd_index: &
     // Write texture 2d image
     let mut it = frame_palette_index.chunks(3).filter(|&c| c[0] == i).map(|c| (&c[1], &c[2]));
 
-    bmd::read_bmd(s.width, s.height, has_shadow[i] > 0, &bmd_buf[bmd_index[i]..], &mut images[out_ptr..], &mut it, &palettes, false);
+    bmd::read_bmd(s.width, s.height, bmd_frame_instance_count[i], has_shadow[i] > 0, &bmd_buf[bmd_index[i]..], &mut images[out_ptr..], &mut it, &palettes, false);
     out_ptr += bmd_frame_instance_count[i] * s.encoded_length;
     // frame_ptr += s.frames;
   }
 
   return images.into_boxed_slice();
-}
-pub fn test_map(it: &mut impl std::iter::Iterator<Item = (usize, usize)>) {
-  for (a, b) in it {
-
-  }
 }
