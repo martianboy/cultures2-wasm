@@ -173,6 +173,8 @@ pub fn read_bmd<'a>(w: usize, h: usize, instance_count: usize, has_shadow: bool,
   // if _debug { console::log_2(&"read_bmd: 1".into(), &JsValue::from(has_shadow)); }
 
   let (rest, header) = read_bmd_header(buf);
+  if _debug { console::log_1(&format!("read_bmd: frames: {}", header.num_frames).into()); }
+
   let mut frames = vec![BmdFrameInfo { frame_type: 0, dx: 0, dy: 0, width: 0, len: 0, off: 0 }; header.num_frames];
   let rest = read_frames(rest, &mut frames[..]).expect("read_frames failed");
   let (rest, pixels) = read_pixels(rest).expect("read_pixels failed.");
@@ -192,39 +194,70 @@ pub fn read_bmd<'a>(w: usize, h: usize, instance_count: usize, has_shadow: bool,
     let mut s_rows = vec![BmdRowInfo { indent: 0, offset: 0 }; s_header.num_rows];
     read_rows(rest, &mut s_rows[..]).expect("read_rows failed.");
 
-    for ((fs, f), p) in frame_palette_index.map(|(&fi, &pi)| { (((&s_frames[fi], &frames[fi]), palettes[pi])) }) {
-      write_uint32_le(&mut out[frame_offset_ptr..], cmp::min(f.dx, fs.dx) as u32);
-      write_uint32_le(&mut out[frame_offset_ptr + 4..], cmp::min(f.dy, fs.dy) as u32);
-      frame_offset_ptr += 8;
+    for (i, (&fi, &pi)) in frame_palette_index.enumerate() {  // .map(|(&fi, &pi)| { (((&s_frames[fi], &frames[fi]), palettes[pi])) })
+      if _debug { console::log_1(&format!("read_bmd #{}: begin - {} - fi: {} - pi: {}", &frames.len(), i, fi, pi).into()); }
 
-      read_bmd_frame(
-        w,
-        cmp::max(0, fs.dx - f.dx) as usize,
-        cmp::max(0, fs.dy - f.dy) as usize,
-        fs,
-        &s_rows[fs.off..fs.off + fs.len],
-        &s_pixels[s_rows[fs.off].offset..],
-        &mut out[out_pointer..],
-        p,
-        _debug
-      );
+      let f = &frames[fi];
+      let p = &palettes[pi];
 
-      read_bmd_frame(
-        w,
-        cmp::max(0, f.dx - fs.dx) as usize,
-        cmp::max(0, f.dy - fs.dy) as usize,
-        f,
-        &rows[f.off..f.off + f.len],
-        &pixels[rows[f.off].offset..],
-        &mut out[out_pointer..],
-        p,
-        _debug
-      );
+      if fi >= s_frames.len() {
+        write_uint32_le(&mut out[frame_offset_ptr..], f.dx as u32);
+        write_uint32_le(&mut out[frame_offset_ptr + 4..], f.dy as u32);
+        frame_offset_ptr += 8;
+
+        read_bmd_frame(
+          w,
+          cmp::max(0, f.dx) as usize,
+          cmp::max(0, f.dy) as usize,
+          f,
+          &rows[f.off..f.off + f.len],
+          &pixels[rows[f.off].offset..],
+          &mut out[out_pointer..],
+          p,
+          _debug
+        );
+      } else {
+        let fs = &s_frames[fi];
+
+        write_uint32_le(&mut out[frame_offset_ptr..], cmp::min(f.dx, fs.dx) as u32);
+        write_uint32_le(&mut out[frame_offset_ptr + 4..], cmp::min(f.dy, fs.dy) as u32);
+        frame_offset_ptr += 8;
+  
+        if _debug { console::log_1(&format!("read_bmd #{}", i).into()); }
+        read_bmd_frame(
+          w,
+          cmp::max(0, fs.dx - f.dx) as usize,
+          cmp::max(0, fs.dy - f.dy) as usize,
+          fs,
+          &s_rows[fs.off..fs.off + fs.len],
+          &s_pixels[s_rows[fs.off].offset..],
+          &mut out[out_pointer..],
+          p,
+          _debug
+        );
+        read_bmd_frame(
+          w,
+          cmp::max(0, f.dx - fs.dx) as usize,
+          cmp::max(0, f.dy - fs.dy) as usize,
+          f,
+          &rows[f.off..f.off + f.len],
+          &pixels[rows[f.off].offset..],
+          &mut out[out_pointer..],
+          p,
+          _debug
+        );
+      }
+
+
+      if _debug { console::log_1(&format!("read_bmd #{}: done", i).into()); }
 
       out_pointer += encoded_frame_length;
     }
   } else {
     for (f, p) in frame_palette_index.map(|(&fi, &pi)| { ((&frames[fi], palettes[pi])) }) {
+      write_uint32_le(&mut out[frame_offset_ptr..], f.dx as u32);
+      write_uint32_le(&mut out[frame_offset_ptr + 4..], f.dy as u32);
+
       read_bmd_frame(
         w,
         0,
@@ -341,11 +374,18 @@ mod tests {
   }
 
   #[test]
-  fn test_le_i32() {
-    let ba = [0xCC, 0xFF, 0xFF, 0xFF];
-    let u = read_uint32_le(&ba[..]);
-    println!("{}", u);
-    println!("{}", u as i32);
+  fn test_zero_frames() {
+    let file = File::open("tests/ls_trees.bmd").expect("File not found!");
+
+    let mut buf_reader = BufReader::new(file);
+    let mut buffer = Vec::new();
+    buf_reader.read_to_end(&mut buffer).expect("read_to_end failed.");
+
+    let (rest, header) = read_bmd_header(&buffer);
+    let mut frames = vec![BmdFrameInfo { frame_type: 0, dx: 0, dy: 0, width: 0, len: 0, off: 0 }; header.num_frames];
+    read_frames(rest, &mut frames[..]).expect("read_frames failed");
+
+    println!("Zero frames: {}", frames.iter().filter(|f| f.frame_type == 0).count());
   }
 
   // #[test]
