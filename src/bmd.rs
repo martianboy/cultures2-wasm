@@ -161,19 +161,6 @@ pub fn bmd_stats(buf: &[u8], has_shadow: &[u8], count: usize) -> Vec<BmdStats> {
   return bmd_stats_vec;
 }
 
-// #[inline]
-// fn divide_up_by_multiple(val: u32, align: u32) -> u32 {
-//   let mask: u32 = align - 1;
-//   (val + mask) / align
-// }
-
-// #[inline]
-// fn calc_output_size(width: u32, height: u32) -> usize {
-//   // BC1 uses 8 bytes to store each 4×4 block, giving it an average data rate of 0.5 bytes per pixel.
-//   let block_count = divide_up_by_multiple(width * height, 16) as usize;
-//   block_count * 8
-// }
-
 #[inline]
 fn write_uint32_le(buf: &mut [u8], val: u32) {
   buf[0] = (val & 0xFF) as u8;
@@ -194,9 +181,8 @@ pub fn read_bmd<'a>(w: usize, h: usize, instance_count: usize, has_shadow: bool,
 
   let mut frame_offset_ptr = 0usize;
   let mut out_pointer: usize = instance_count * 8;
-  // let mut writer = BufWriter::new(out);
 
-  let encoded_frame_length = w * h * 4; //calc_output_size(w as u32, h as u32);
+  let encoded_frame_length = w * h * 4;
 
   if has_shadow {
     let (rest, s_header) = read_bmd_header(rest);
@@ -211,9 +197,6 @@ pub fn read_bmd<'a>(w: usize, h: usize, instance_count: usize, has_shadow: bool,
       write_uint32_le(&mut out[frame_offset_ptr + 4..], cmp::min(f.dy, fs.dy) as u32);
       frame_offset_ptr += 8;
 
-      // let encoder = DXTEncoder::new(&mut writer);
-      // let mut img = vec![0u8; w * h * 4];
-
       read_bmd_frame(
         w,
         cmp::max(0, fs.dx - f.dx) as usize,
@@ -225,6 +208,7 @@ pub fn read_bmd<'a>(w: usize, h: usize, instance_count: usize, has_shadow: bool,
         p,
         _debug
       );
+
       read_bmd_frame(
         w,
         cmp::max(0, f.dx - fs.dx) as usize,
@@ -237,8 +221,6 @@ pub fn read_bmd<'a>(w: usize, h: usize, instance_count: usize, has_shadow: bool,
         _debug
       );
 
-      // console::log_1(&format!("Hey there!").into());
-      // encoder.encode(&img[..], w as u32, h as u32, DXTVariant::DXT1).expect("DXT1 encoder failed");
       out_pointer += encoded_frame_length;
     }
   } else {
@@ -259,9 +241,6 @@ pub fn read_bmd<'a>(w: usize, h: usize, instance_count: usize, has_shadow: bool,
     }
   }
 
-    // if _debug { console::log_1(&"read_bmd: 4".into()); }
-
-  // out_pointer += calc_output_size(w, f.)
   return out_pointer;
 }
 
