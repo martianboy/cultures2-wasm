@@ -1,15 +1,19 @@
+#[inline]
 fn tri_a_coords(i: usize, w: usize) -> [usize; 3] {
-  let row = i / w;
   return [
     i as usize,
-    (i + w + (row % 2)) as usize,
-    (i + w + (row % 2) - 1) as usize,
+    (i + w + (i / w % 2)) as usize,
+    (i + w + (i / w % 2) - 1) as usize,
   ];
 }
 
+#[inline]
 fn tri_b_coords(i: usize, w: usize) -> [usize; 3] {
-  let row = i / w;
-  return [i as usize, (i + 1) as usize, (i + w + (row % 2)) as usize];
+  return [
+    i as usize,
+    (i + 1) as usize,
+    (i + w + (i / w % 2)) as usize,
+  ];
 }
 
 fn elevation_at_tri_a(i: usize, width: usize, height: usize, elv: &[u8]) -> [f32; 3] {
