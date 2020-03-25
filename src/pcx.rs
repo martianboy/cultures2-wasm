@@ -26,7 +26,7 @@ fn read_pixels<'a, 'b>(buf: &'a [u8], pixels: &'b mut Vec<u8>) -> (&'a[u8], &'b[
   (&buf[pos..], &pixels[..])
 }
 
-fn read_palette(buf: &[u8]) -> Result<&[u8], &'static str> {
+pub fn read_palette(buf: &[u8]) -> Result<&[u8], &'static str> {
   if buf[0] != 0x0C {
     return Err("PCX extended palette marker 0x0C not found.");
   }

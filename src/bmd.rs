@@ -169,17 +169,25 @@ fn write_uint32_le(buf: &mut [u8], val: u32) {
   buf[3] = ((val & 0xFF000000) >> 24) as u8;
 }
 
+macro_rules! bmd {
+  ($e:expr) => {
+    {
+      let (rest, header) = read_bmd_header($e);
+    
+      let mut frames = vec![BmdFrameInfo { frame_type: 0, dx: 0, dy: 0, width: 0, len: 0, off: 0 }; header.num_frames];
+      let rest = read_frames(rest, &mut frames[..]).expect("read_frames failed");
+      let (rest, pixels) = read_pixels(rest).expect("read_pixels failed.");
+      let mut rows = vec![BmdRowInfo { indent: 0, offset: 0 }; header.num_rows];
+      let rest = read_rows(rest, &mut rows[..]).expect("read_rows failed.");
+
+      (frames, (pixels, (rows, rest)))
+    }
+  };
+}
+
 pub fn read_bmd<'a>(w: usize, h: usize, instance_count: usize, has_shadow: bool, buf: &[u8], out: &mut [u8], frame_palette_index: &mut impl std::iter::Iterator<Item = (&'a usize, &'a usize)>, palettes: &Vec<&[u8]>, _debug: bool) -> usize {
   // if _debug { console::log_2(&"read_bmd: 1".into(), &JsValue::from(has_shadow)); }
-
-  let (rest, header) = read_bmd_header(buf);
-  if _debug { console::log_1(&format!("read_bmd: frames: {}", header.num_frames).into()); }
-
-  let mut frames = vec![BmdFrameInfo { frame_type: 0, dx: 0, dy: 0, width: 0, len: 0, off: 0 }; header.num_frames];
-  let rest = read_frames(rest, &mut frames[..]).expect("read_frames failed");
-  let (rest, pixels) = read_pixels(rest).expect("read_pixels failed.");
-  let mut rows = vec![BmdRowInfo { indent: 0, offset: 0 }; header.num_rows];
-  let rest = read_rows(rest, &mut rows[..]).expect("read_rows failed.");
+  let (frames, (pixels, (rows, rest))) = bmd!(buf);
 
   let mut frame_offset_ptr = 0usize;
   let mut out_pointer: usize = instance_count * 8;
@@ -187,12 +195,7 @@ pub fn read_bmd<'a>(w: usize, h: usize, instance_count: usize, has_shadow: bool,
   let encoded_frame_length = w * h * 4;
 
   if has_shadow {
-    let (rest, s_header) = read_bmd_header(rest);
-    let mut s_frames = vec![BmdFrameInfo { frame_type: 0, dx: 0, dy: 0, width: 0, len: 0, off: 0 }; s_header.num_frames];
-    let rest = read_frames(rest, &mut s_frames[..]).expect("read_frames failed");
-    let (rest, s_pixels) = read_pixels(rest).expect("read_pixels failed.");
-    let mut s_rows = vec![BmdRowInfo { indent: 0, offset: 0 }; s_header.num_rows];
-    read_rows(rest, &mut s_rows[..]).expect("read_rows failed.");
+    let (s_frames, (s_pixels, (s_rows, _))) = bmd!(rest);
 
     for (i, (&fi, &pi)) in frame_palette_index.enumerate() {  // .map(|(&fi, &pi)| { (((&s_frames[fi], &frames[fi]), palettes[pi])) })
       if _debug { console::log_1(&format!("read_bmd #{}: begin - {} - fi: {} - pi: {}", &frames.len(), i, fi, pi).into()); }
@@ -313,6 +316,12 @@ fn read_bmd_frame(w: usize, p_w: usize, p_h: usize, fi: &BmdFrameInfo, rows: &[B
             out[out_pos + 1] = palette[3 * color_index + 1];
             out[out_pos + 2] = palette[3 * color_index + 2];
             out[out_pos + 3] = 0xFF;
+          } else if fi.frame_type == 4 {    // Extended frame
+            let color_index = pixels[pixels_ptr] as usize; pixels_ptr += 2;
+            out[out_pos + 0] = palette[3 * color_index + 0];
+            out[out_pos + 1] = palette[3 * color_index + 1];
+            out[out_pos + 2] = palette[3 * color_index + 2];
+            out[out_pos + 3] = 0xFF;
           } else {
             // console::log_2(&"read_bmd: frame type unknown:".into(), &JsValue::from(fi.frame_type as u32));
           }
@@ -332,7 +341,7 @@ mod tests {
   use std::fs::File;
   use std::io::BufReader;
   use std::io::Read;
-  use crate::pcx::pcx_read_palette_array;
+  use crate::pcx::{pcx_read_palette_array, read_palette};
 
   use image;
   use image::png::{PngDecoder, PNGReader};
@@ -386,6 +395,34 @@ mod tests {
     read_frames(rest, &mut frames[..]).expect("read_frames failed");
 
     println!("Zero frames: {}", frames.iter().filter(|f| f.frame_type == 0).count());
+  }
+
+  #[test]
+  fn test_extract_bmd_frame() {
+    let file = File::open("../cultures-fun/data/engine2d/bin/bobs/ls_meadows.bmd").expect("File not found!");
+
+    let mut buf_reader = BufReader::new(file);
+    let mut buffer = Vec::new();
+    buf_reader.read_to_end(&mut buffer).expect("read_to_end failed.");
+
+    let (frames, (pixels, (rows, _))) = bmd!(&buffer[..]);
+
+    let file = File::open("../cultures-fun/data/engine2d/bin/palettes/landscapes/flower01.pcx").expect("Palette file not found!");
+    let mut buf_reader = BufReader::new(file);
+    let mut buffer = Vec::new();
+    buf_reader.read_to_end(&mut buffer).expect("read_to_end failed.");
+
+    let pal = read_palette(&buffer[buffer.len() - 769..]).expect("read palette failed.");
+
+    const w: usize = 200;
+    const h: usize = 200;
+
+    let mut img = [0u8; w * h * 4];
+    let fi = &frames[0];
+    println!("Frame type: {}", fi.frame_type);
+    read_bmd_frame(w, 0, 0, fi, &rows[fi.off..fi.off + fi.len], &pixels[rows[fi.off].offset..], &mut img[..], &pal, false);
+
+    image::save_buffer("tests/ls_trees.png", &img[..], w as u32, h as u32, image::ColorType::Rgba8).unwrap();
   }
 
   // #[test]
