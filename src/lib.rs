@@ -57,7 +57,7 @@ pub fn create_bmd_texture_array(bmd_buf: &[u8], palette_buf: &[u8], bmd_index: &
 
   let palettes = pcx::pcx_read_palette_array(palette_buf, palette_index);
   let bmd_stats = bmd::bmd_stats(bmd_buf, has_shadow, bmd_index.len());
-  let total_buf_length = 4 * 4 + bmd_stats.iter().zip(bmd_frame_instance_count).fold(0, |r, (s, c)| r + c * (2 * 4 + s.encoded_length));
+  let total_buf_length = bmd_stats.iter().zip(bmd_frame_instance_count).fold(0, |r, (s, c)| r + 4 * 4 + c * (2 * 4 + s.encoded_length));
 
   let mut images = vec![0u8; total_buf_length];
   let mut out_ptr = 0usize;
@@ -66,6 +66,8 @@ pub fn create_bmd_texture_array(bmd_buf: &[u8], palette_buf: &[u8], bmd_index: &
   for i in 0..bmd_index.len() {
     let s = &bmd_stats[i];
 
+    console::log_1(&format!("out_ptr was {}", out_ptr).into());
+
     // Write header
     write_uint32_le(&mut images[out_ptr..], bmd_frame_instance_count[i] as u32); out_ptr += 4;
     write_uint32_le(&mut images[out_ptr..], s.width as u32); out_ptr += 4;
@@ -73,13 +75,14 @@ pub fn create_bmd_texture_array(bmd_buf: &[u8], palette_buf: &[u8], bmd_index: &
     write_uint32_le(&mut images[out_ptr..], (bmd_frame_instance_count[i] * s.encoded_length) as u32); out_ptr += 4;
 
     // Write texture 2d image
-    let frame_instance_count = frame_palette_index[i];
+    let frame_instance_count = bmd_frame_instance_count[i];
 
     let mut it = frame_palette_index[bmd_index.len() + frame_ptr..bmd_index.len() + frame_ptr + frame_instance_count * 2].chunks(2).map(|c| (&c[0], &c[1]));
     frame_ptr += frame_instance_count * 2;
 
-    bmd::read_bmd(s.width, s.height, bmd_frame_instance_count[i], has_shadow[i] > 0, &bmd_buf[bmd_index[i]..], &mut images[out_ptr..], &mut it, &palettes, false);
-    out_ptr += bmd_frame_instance_count[i] * s.encoded_length;
+    out_ptr += bmd::read_bmd(s.width, s.height, bmd_frame_instance_count[i], has_shadow[i] > 0, &bmd_buf[bmd_index[i]..], &mut images[out_ptr..], &mut it, &palettes, true);
+    console::log_1(&format!("out_ptr is {}", out_ptr).into());
+    // out_ptr += 2 * 4 * frame_instance_count + bmd_frame_instance_count[i] * s.encoded_length;
   }
 
   return images.into_boxed_slice();
