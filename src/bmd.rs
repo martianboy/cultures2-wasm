@@ -12,7 +12,7 @@ struct BmdHeader {
   num_rows: usize,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 struct BmdFrameInfo {
   frame_type: u32,
   dx: i32,
@@ -22,13 +22,14 @@ struct BmdFrameInfo {
   off: usize,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct BmdRowInfo {
+  raw: u32,
   indent: usize,
   offset: usize,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct BmdStats {
   pub width: usize,
   pub height: usize,
@@ -86,6 +87,7 @@ fn read_rows<'a>(buf: &'a[u8], rows: &mut [BmdRowInfo]) -> Result<&'a[u8], &'sta
 
   for i in 0..(section_length / 4) {
     let u = read_uint32_le(&rest);
+    rows[i].raw = u;
     rows[i].indent = (u >> 22) as usize;
     rows[i].offset = (u & ((1 << 22) - 1)) as usize;
     rest = &rest[4..];
@@ -177,7 +179,7 @@ macro_rules! bmd {
       let mut frames = vec![BmdFrameInfo { frame_type: 0, dx: 0, dy: 0, width: 0, len: 0, off: 0 }; header.num_frames];
       let rest = read_frames(rest, &mut frames[..]).expect("read_frames failed");
       let (rest, pixels) = read_pixels(rest).expect("read_pixels failed.");
-      let mut rows = vec![BmdRowInfo { indent: 0, offset: 0 }; header.num_rows];
+      let mut rows = vec![BmdRowInfo { raw: 0, indent: 0, offset: 0 }; header.num_rows];
       let rest = read_rows(rest, &mut rows[..]).expect("read_rows failed.");
 
       (frames, (pixels, (rows, rest)))
@@ -186,7 +188,7 @@ macro_rules! bmd {
 }
 
 pub fn read_bmd<'a>(w: usize, h: usize, instance_count: usize, has_shadow: bool, buf: &[u8], out: &mut [u8], frame_palette_index: &mut impl std::iter::Iterator<Item = (&'a usize, &'a usize)>, palettes: &Vec<&[u8]>, _debug: bool) -> usize {
-  if _debug { console::log_2(&"read_bmd: 1".into(), &JsValue::from(has_shadow)); }
+  // if _debug { console::log_2(&"read_bmd: 1".into(), &JsValue::from(has_shadow)); }
   let (frames, (pixels, (rows, rest))) = bmd!(buf);
 
   let mut frame_offset_ptr = 0usize;
@@ -295,13 +297,16 @@ fn read_bmd_frame(w: usize, p_w: usize, p_h: usize, fi: &BmdFrameInfo, rows: &[B
   let mut out_pos;
   let mut pixels_ptr = 0;
 
-  println!("#### {}", rows.len());
+  // println!("#### {}", rows.len());
 
   for (i, r) in rows.iter().enumerate() {
     // if _debug { console::log_2(&"read_bmd_frame: row:".into(), &JsValue::from(i as u32)); }
     // if _debug { console::log_1(&format!("r.indent = {}, r.offset = {}", r.indent, r.offset).into()); }
 
-    if pixels_ptr >= pixels.len() { return };
+    // println!("{:?}", r);
+
+    if pixels_ptr >= pixels.len() { return; }
+    if r.raw as i32 == -1 { continue; }
 
     out_pos = 4 * ((i + p_h) * w + r.indent + p_w);
     // if _debug { console::log_1(&format!("{} = 4 * (({} + {}) * {} + {} + {})", out_pos, i, p_h, w, r.indent, p_w).into()); }
@@ -341,7 +346,7 @@ fn read_bmd_frame(w: usize, p_w: usize, p_h: usize, fi: &BmdFrameInfo, rows: &[B
           out_pos += 4;
         }
       } else {
-        out_pos += 4 * (pixel_block_length - 0x80);
+        out_pos += 4 * 1 * (pixel_block_length - 0x80);
       }
 
       pixel_block_length = pixels[pixels_ptr] as usize; pixels_ptr += 1;
@@ -412,7 +417,7 @@ mod tests {
 
   #[test]
   fn test_extract_bmd_frame() {
-    let file = File::open("../cultures-fun/data/engine2d/bin/bobs/ls_meadows.bmd").expect("File not found!");
+    let file = File::open("../cultures-fun/data/engine2d/bin/bobs/ls_ground.bmd").expect("File not found!");
 
     let mut buf_reader = BufReader::new(file);
     let mut buffer = Vec::new();
@@ -420,7 +425,7 @@ mod tests {
 
     let (frames, (pixels, (rows, _))) = bmd!(&buffer[..]);
 
-    let file = File::open("../cultures-fun/data/engine2d/bin/palettes/landscapes/fern01.pcx").expect("Palette file not found!");
+    let file = File::open("../cultures-fun/data/engine2d/bin/palettes/landscapes/rock03.pcx").expect("Palette file not found!");
     let mut buf_reader = BufReader::new(file);
     let mut buffer = Vec::new();
     buf_reader.read_to_end(&mut buffer).expect("read_to_end failed.");
@@ -430,17 +435,19 @@ mod tests {
     const w: usize = 200;
     const h: usize = 200;
 
-    let mut img = [0u8; w * h * 4];
-    let fi = &frames[24];
-    println!("Frame type: {}", fi.frame_type);
-    read_bmd_frame(w, 0, 0, fi, &rows[fi.off..fi.off + fi.len], &pixels[rows[fi.off].offset..], &mut img[..], &pal, false);
+    for &i in [0, 17].iter() {
+      let mut img = [0u8; w * h * 4];
+      let fi = &frames[i];
+      println!("Frame type: {}", fi.frame_type);
+      read_bmd_frame(w, 0, 0, fi, &rows[fi.off..fi.off + fi.len], &pixels[rows[fi.off].offset..], &mut img[..], &pal, false);
 
-    let file = File::create("tests/dump.frm").expect("File could not be created!");
-    let mut writer = std::io::BufWriter::new(file);
-    let mut pxl = &pixels[rows[fi.off].offset..rows[fi.off + fi.len].offset];
-    writer.write_all(&mut pxl).expect("Write dump failed.");
+      let file = File::create(format!("tests/dump_{}.frm", i)).expect("File could not be created!");
+      let mut writer = std::io::BufWriter::new(file);
+      let mut pxl = &pixels[rows[fi.off].offset..rows[fi.off + fi.len].offset];
+      writer.write_all(&mut pxl).expect("Write dump failed.");
 
-    image::save_buffer("tests/ls_trees.png", &img[..], w as u32, h as u32, image::ColorType::Rgba8).unwrap();
+      image::save_buffer(format!("tests/ls_trees_{}.png", i), &img[..], w as u32, h as u32, image::ColorType::Rgba8).unwrap();
+    }
   }
 
   // #[test]

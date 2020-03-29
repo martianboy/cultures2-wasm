@@ -66,7 +66,7 @@ pub fn create_bmd_texture_array(bmd_buf: &[u8], palette_buf: &[u8], bmd_index: &
   for i in 0..bmd_index.len() {
     let s = &bmd_stats[i];
 
-    console::log_1(&format!("out_ptr was {}", out_ptr).into());
+    // console::log_1(&format!("out_ptr was {}", out_ptr).into());
 
     // Write header
     write_uint32_le(&mut images[out_ptr..], bmd_frame_instance_count[i] as u32); out_ptr += 4;
@@ -80,8 +80,8 @@ pub fn create_bmd_texture_array(bmd_buf: &[u8], palette_buf: &[u8], bmd_index: &
     let mut it = frame_palette_index[bmd_index.len() + frame_ptr..bmd_index.len() + frame_ptr + frame_instance_count * 2].chunks(2).map(|c| (&c[0], &c[1]));
     frame_ptr += frame_instance_count * 2;
 
-    out_ptr += bmd::read_bmd(s.width, s.height, bmd_frame_instance_count[i], has_shadow[i] > 0, &bmd_buf[bmd_index[i]..], &mut images[out_ptr..], &mut it, &palettes, true);
-    console::log_1(&format!("out_ptr is {}", out_ptr).into());
+    out_ptr += bmd::read_bmd(s.width, s.height, bmd_frame_instance_count[i], has_shadow[i] > 0, &bmd_buf[bmd_index[i]..], &mut images[out_ptr..], &mut it, &palettes, false);
+    // console::log_1(&format!("out_ptr is {}", out_ptr).into());
     // out_ptr += 2 * 4 * frame_instance_count + bmd_frame_instance_count[i] * s.encoded_length;
   }
 
