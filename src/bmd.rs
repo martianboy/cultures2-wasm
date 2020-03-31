@@ -401,8 +401,20 @@ mod tests {
   }
 
   #[test]
+  fn test_empty_rows() {
+    let file = File::open("../cultures-fun/data/engine2d/bin/bobs/ls_goods_s.bmd").expect("File not found!");
+
+    let mut buf_reader = BufReader::new(file);
+    let mut buffer = Vec::new();
+    buf_reader.read_to_end(&mut buffer).expect("read_to_end failed.");
+
+    let (frames, (pixels, (rows, rest))) = bmd!(&buffer);
+    println!("Empty rows: {}", rows.iter().filter(|r| r.raw as i32 == -1).count());
+  }
+
+  #[test]
   fn test_zero_frames() {
-    let file = File::open("tests/ls_trees.bmd").expect("File not found!");
+    let file = File::open("../cultures-fun/data/engine2d/bin/bobs/ls_ground.bmd").expect("File not found!");
 
     let mut buf_reader = BufReader::new(file);
     let mut buffer = Vec::new();
