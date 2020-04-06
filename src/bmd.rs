@@ -210,7 +210,6 @@ pub fn read_bmd<'a>(w: usize, h: usize, instance_count: usize, has_shadow: bool,
         if fi >= s_frames.len() {
           write_uint32_le(&mut out[frame_offset_ptr..], f.dx as u32);
           write_uint32_le(&mut out[frame_offset_ptr + 4..], f.dy as u32);
-          frame_offset_ptr += 8;
 
           read_bmd_frame(
             w,
@@ -228,7 +227,6 @@ pub fn read_bmd<'a>(w: usize, h: usize, instance_count: usize, has_shadow: bool,
 
           write_uint32_le(&mut out[frame_offset_ptr..], cmp::min(f.dx, fs.dx) as u32);
           write_uint32_le(&mut out[frame_offset_ptr + 4..], cmp::min(f.dy, fs.dy) as u32);
-          frame_offset_ptr += 8;
     
           // if _debug { console::log_1(&format!("read_bmd #{}", i).into()); }
           read_bmd_frame(
@@ -258,25 +256,26 @@ pub fn read_bmd<'a>(w: usize, h: usize, instance_count: usize, has_shadow: bool,
 
       // if _debug { console::log_1(&format!("read_bmd #{}: done", i).into()); }
 
+      frame_offset_ptr += 8;
       out_pointer += encoded_frame_length;
     }
   } else {
     for (i, (&fi, &pi)) in frame_palette_index.enumerate() {  // .map(|(&fi, &pi)| { (((&s_frames[fi], &frames[fi]), palettes[pi])) })
-      // if _debug { console::log_1(&format!("read_bmd #{}: begin - {} - fi: {} - pi: {}", &frames.len(), i, fi, pi).into()); }
+      if _debug { console::log_1(&format!("read_bmd #{}: begin - {} - fi: {} - pi: {}", &frames.len(), i, fi, pi).into()); }
 
       if fi < frames.len() {
         let f = &frames[fi];
         let p = &palettes[pi];
 
-        // if _debug { console::log_1(&format!("read_bmd (no shadow) #{}: frame type: {}", i, f.frame_type).into()); }
+        if _debug { console::log_1(&format!("read_bmd (no shadow) #{}: dx: {}, dy: {}", i, f.dx, f.dy).into()); }
 
         write_uint32_le(&mut out[frame_offset_ptr..], f.dx as u32);
         write_uint32_le(&mut out[frame_offset_ptr + 4..], f.dy as u32);
 
         read_bmd_frame(
           w,
-          0,
-          0,
+          cmp::max(0, f.dx) as usize,
+          cmp::max(0, f.dy) as usize,
           f,
           &rows[f.off..f.off + f.len],
           &pixels[rows[f.off].offset..],
@@ -284,9 +283,10 @@ pub fn read_bmd<'a>(w: usize, h: usize, instance_count: usize, has_shadow: bool,
           p,
           _debug
         );
-
-        out_pointer += encoded_frame_length;
       }
+
+      frame_offset_ptr += 8;
+      out_pointer += encoded_frame_length;
     }
   }
 
@@ -334,12 +334,12 @@ fn read_bmd_frame(w: usize, p_w: usize, p_h: usize, fi: &BmdFrameInfo, rows: &[B
             out[out_pos + 3] = 0xFF;
           } else if fi.frame_type == 4 {    // Extended frame
             let color_index = pixels[pixels_ptr] as usize; pixels_ptr += 1;
-            let pixel_level = pixels[pixels_ptr] as usize; pixels_ptr += 1;
+            let pixel_level = pixels[pixels_ptr]; pixels_ptr += 1;
 
             out[out_pos + 0] = palette[3 * color_index + 0];
             out[out_pos + 1] = palette[3 * color_index + 1];
             out[out_pos + 2] = palette[3 * color_index + 2];
-            out[out_pos + 3] = 0xFF; // if pixel_level == 255 { 0xFF } else { 0x00 };
+            out[out_pos + 3] = pixel_level; // if pixel_level == 255 { 0xFF } else { 0x00 };
           } else {
             // console::log_2(&"read_bmd: frame type unknown:".into(), &JsValue::from(fi.frame_type as u32));
           }
