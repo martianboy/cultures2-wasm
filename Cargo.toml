@@ -18,6 +18,7 @@ features = [ "console" ]
 [dependencies]
 wasm-bindgen = "0.2"
 image = "0.23"
+rayon = "1.5"
 # itertools = "0.9"
 
 # js-sys = "0.3.36"
@@ -48,3 +49,6 @@ panic = "unwind"
 [profile.release]
 # Tell `rustc` to optimize for small code size.
 opt-level = "s"
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ['-O3', '--enable-mutable-globals', '--detect-features']

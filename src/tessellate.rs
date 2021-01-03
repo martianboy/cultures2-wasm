@@ -1,3 +1,5 @@
+use rayon::prelude::*;
+
 #[inline]
 fn tri_a_coords(i: usize, w: usize) -> [usize; 3] {
   return [
@@ -74,3 +76,32 @@ pub fn triangulate_map(map: &mut Vec<f32>, width: usize, height: usize, elevatio
     map[12 * i + 11] = fy + 2.0 - elv_b[2];
   }
 }
+
+// pub fn triangulate_map(map: &mut Vec<f32>, width: usize, height: usize, elevation: &[u8]) {
+//   // let len = width * height;
+
+//   map.par_chunks_mut(12).enumerate().for_each(|(i, r)| {
+//     let x = i % width;
+//     let y = i / width;
+
+//     let off = (y % 2) as f32;
+//     let elv_a = elevation_at_tri_a(i, width, height, elevation);
+//     let elv_b = elevation_at_tri_b(i, width, height, elevation);
+//     let fx = 2.0 * x as f32;
+//     let fy = 2.0 * y as f32;
+
+//     r[0] = fx + 0.0 + off;
+//     r[1] = fy + 0.0 - elv_a[0];
+//     r[2] = fx + 1.0 + off;
+//     r[3] = fy + 2.0 - elv_a[1];
+//     r[4] = fx - 1.0 + off;
+//     r[5] = fy + 2.0 - elv_a[2];
+
+//     r[6] = fx + 0.0 + off;
+//     r[7] = fy + 0.0 - elv_b[0];
+//     r[8] = fx + 2.0 + off;
+//     r[9] = fy + 0.0 - elv_b[1];
+//     r[10] = fx + 1.0 + off;
+//     r[11] = fy + 2.0 - elv_b[2];
+//   })
+// }
